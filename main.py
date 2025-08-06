@@ -1,86 +1,75 @@
-import numpy as np
-import pandas as pd
+import streamlit as st
 import os
-import tensorflow as tf
-from keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Activation, Dropout, Flatten, Dense, Input, Layer
-from keras.models import Model, Sequential
-from keras import layers, models
-from keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
-from keras.optimizers import Adam
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from keras.preprocessing import image
+from PIL import Image
+import numpy as np
+import pickle
+from sklearn.neighbors import NearestNeighbors
 
-plt.rcParams['font.size'] = 16
+# Load your precomputed image embeddings and filenames
+feature_list = np.array(pickle.load(open('embeddings.pkl', 'rb')))
+filenames = pickle.load(open('filenames.pkl', 'rb'))
 
-images = "C:\\Users\\varsh\\Downloads\\WISE_DL_PROJECT\\images"
-styles_df = pd.read_csv("C:\\Users\\varsh\\Downloads\\WISE_DL_PROJECT\\styles.csv", on_bad_lines='skip')
+# Create a Streamlit app
+st.title('Fashion Recommender System')
 
-styles_df.head()
+# Function to save the uploaded file
+def save_uploaded_file(uploaded_file):
+    try:
+        with open(os.path.join('uploads', uploaded_file.name), 'wb') as f:
+            f.write(uploaded_file.getbuffer())
+        return 1
+    except Exception as e:
+        return str(e)
 
-styles_df['filename'] = styles_df['id'].astype(str) + '.jpg'
+# Function for feature extraction
+def feature_extraction(img_path, model):
+    # Load the image
+    img = image.load_img(img_path, target_size=(224, 224))
+    img_array = image.img_to_array(img)
+    expanded_img_array = np.expand_dims(img_array, axis=0)
+    preprocessed_img = preprocess_input(expanded_img_array)
+    
+    # Extract features using the model
+    result = model.predict(preprocessed_img).flatten()
+    
+    # Normalize the feature vector
+    normalized_result = result / norm(result)
+    
+    return normalized_result
 
-styles_df
 
-label_encoder = LabelEncoder()
-styles_df['encoded_labels'] = label_encoder.fit_transform(styles_df['articleType'])
+# Function to recommend similar images
+def recommend(features, feature_list):
+    neighbors = NearestNeighbors(n_neighbors=5, algorithm='brute', metric='euclidean')
+    neighbors.fit(feature_list)
 
-train_df, test_df = train_test_split(styles_df, test_size=0.2, random_state=42)
+    distances, indices = neighbors.kneighbors([features])
 
-# Data augmentation and normalization
-train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(
-    rescale=1./255,
-    shear_range=0.2,
-    zoom_range=0.2,
-    horizontal_flip=True
-)
+    return indices
 
-test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255)
+# Upload an image
+uploaded_file = st.file_uploader("Choose an image")
+if uploaded_file is not None:
+    upload_result = save_uploaded_file(uploaded_file)
+    if upload_result == 1:
+        # Display the uploaded image
+        display_image = Image.open(uploaded_file)
+        st.image(display_image, caption='Uploaded Image', use_column_width=True)
 
-train_generator = train_datagen.flow_from_dataframe(
-    dataframe=train_df,
-    directory=images,  # path to the images folder
-    x_col="filename",
-    y_col="encoded_labels",
-    target_size=(150, 150),  # adjust based on your image size
-    batch_size=32,
-    class_mode="raw"  # 'raw' for regression, 'categorical' for one-hot encoding
-)
+        # Feature extraction
+        features = feature_extraction(os.path.join('uploads', uploaded_file.name), model)
 
-validation_generator = test_datagen.flow_from_dataframe(
-    dataframe=test_df,
-    directory=images,
-    x_col="filename",
-    y_col="encoded_labels",
-    target_size=(150, 150),
-    batch_size=32,
-    class_mode="raw"
-)
+        # Recommendation
+        indices = recommend(features, feature_list)
 
-model = models.Sequential()
-model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)))
-model.add(layers.MaxPooling2D((2, 2)))
-model.add(layers.Conv2D(64, (3, 3), activation='relu'))
-model.add(layers.MaxPooling2D((2, 2)))
-model.add(layers.Conv2D(128, (3, 3), activation='relu'))
-model.add(layers.MaxPooling2D((2, 2)))
-model.add(layers.Flatten())
-model.add(layers.Dense(128, activation='relu'))
-model.add(layers.Dense(len(label_encoder.classes_), activation='softmax'))
+        # Display similar images
+        st.header('Similar Images:')
+        col1, col2, col3, col4, col5 = st.columns(5)
+        for i in indices[0]:
+            st.image(filenames[i], use_column_width=True)
 
-model.compile(optimizer='adam',
-              loss='sparse_categorical_crossentropy',  # use 'categorical_crossentropy' for one-hot encoding
-              metrics=['accuracy'])
+    else:
+        st.error(f"Error during file upload: {upload_result}")
 
-history = model.fit(
-    train_generator,
-    epochs=10,
-    validation_data=validation_generator
-)
-
-# Save the model
-model.save("model.h5")
-
-# Save the label encoder classes
-np.save("label.npy", label_encoder.classes_)
+# Create an 'uploads' directory to store uploaded images
+os.makedirs('uploads', exist_ok=True)
