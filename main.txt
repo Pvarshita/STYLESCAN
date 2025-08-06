@@ -1,0 +1,86 @@
+import numpy as np
+import pandas as pd
+import os
+import tensorflow as tf
+from keras.layers import Conv2D, MaxPooling2D, GlobalAveragePooling2D, Activation, Dropout, Flatten, Dense, Input, Layer
+from keras.models import Model, Sequential
+from keras import layers, models
+from keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
+from keras.optimizers import Adam
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from keras.preprocessing import image
+
+plt.rcParams['font.size'] = 16
+
+images = 'C:\\Users\\akshu\\Downloads\\final\\images\\images'
+styles_df = pd.read_csv("C:\\Users\\akshu\\Downloads\\final\\styles.csv", on_bad_lines='skip')
+
+styles_df.head()
+
+styles_df['filename'] = styles_df['id'].astype(str) + '.jpg'
+
+styles_df
+
+label_encoder = LabelEncoder()
+styles_df['encoded_labels'] = label_encoder.fit_transform(styles_df['articleType'])
+
+train_df, test_df = train_test_split(styles_df, test_size=0.2, random_state=42)
+
+# Data augmentation and normalization
+train_datagen = tf.keras.preprocessing.image.ImageDataGenerator(
+    rescale=1./255,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True
+)
+
+test_datagen = tf.keras.preprocessing.image.ImageDataGenerator(rescale=1./255)
+
+train_generator = train_datagen.flow_from_dataframe(
+    dataframe=train_df,
+    directory=images,  # path to the images folder
+    x_col="filename",
+    y_col="encoded_labels",
+    target_size=(150, 150),  # adjust based on your image size
+    batch_size=32,
+    class_mode="raw"  # 'raw' for regression, 'categorical' for one-hot encoding
+)
+
+validation_generator = test_datagen.flow_from_dataframe(
+    dataframe=test_df,
+    directory=images,
+    x_col="filename",
+    y_col="encoded_labels",
+    target_size=(150, 150),
+    batch_size=32,
+    class_mode="raw"
+)
+
+model = models.Sequential()
+model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)))
+model.add(layers.MaxPooling2D((2, 2)))
+model.add(layers.Conv2D(64, (3, 3), activation='relu'))
+model.add(layers.MaxPooling2D((2, 2)))
+model.add(layers.Conv2D(128, (3, 3), activation='relu'))
+model.add(layers.MaxPooling2D((2, 2)))
+model.add(layers.Flatten())
+model.add(layers.Dense(128, activation='relu'))
+model.add(layers.Dense(len(label_encoder.classes_), activation='softmax'))
+
+model.compile(optimizer='adam',
+              loss='sparse_categorical_crossentropy',  # use 'categorical_crossentropy' for one-hot encoding
+              metrics=['accuracy'])
+
+history = model.fit(
+    train_generator,
+    epochs=10,
+    validation_data=validation_generator
+)
+
+# Save the model
+model.save("model.h5")
+
+# Save the label encoder classes
+np.save("label.npy", label_encoder.classes_)
